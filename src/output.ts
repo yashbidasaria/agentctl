@@ -24,6 +24,15 @@ export class OutputWriter {
           );
         }
         return;
+      case "result":
+        // Collect deltas; print only the final answer text on done.
+        if (event.type === "assistant_text") this.finalText += event.text;
+        if (event.type === "error") process.stderr.write(`\n[error] ${event.message}\n`);
+        if (event.type === "done") {
+          const text = event.result ?? this.finalText;
+          if (text) process.stdout.write(`${text}\n`);
+        }
+        return;
       case "text":
       default:
         this.renderText(event);

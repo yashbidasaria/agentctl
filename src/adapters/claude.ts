@@ -68,6 +68,13 @@ export const claudeAdapter: AgentAdapter = {
         "[agentctl] note: --settings inline is not supported by Claude Code; project settings apply.\n",
       );
     }
+    // In subprocess mode stdin is always ignored, so --approve none silently
+    // denies every tool that would normally prompt for approval.
+    if (!prompt.interactive && prompt.approve === "none") {
+      process.stderr.write(
+        "[agentctl] note: running with --approve none — agent tool use (shell, file edits) is denied. Pass --approve all to permit it.\n",
+      );
+    }
 
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     if (session.externalSessionId) args.push("--resume", session.externalSessionId);

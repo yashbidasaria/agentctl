@@ -13,7 +13,7 @@ export type ApprovePolicy = "none" | "all";
 
 export type SettingSource = "inline" | "project" | "all";
 
-export type OutputFormat = "text" | "json" | "stream-json";
+export type OutputFormat = "text" | "json" | "stream-json" | "result";
 
 /** Normalized event emitted by every adapter. `meta` is first; `done` is terminal. */
 export type AgentEvent =

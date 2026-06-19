@@ -71,6 +71,11 @@ export const cursorAdapter: AgentAdapter = {
         `[agentctl] note: --settings ${prompt.settings} is not controllable via the Cursor CLI; project settings apply.\n`,
       );
     }
+    if (!prompt.interactive && prompt.approve === "none") {
+      process.stderr.write(
+        "[agentctl] note: running with --approve none — agent tool use requiring approval is denied. Pass --approve all (maps to --force) to permit it.\n",
+      );
+    }
 
     const args = ["-p", "--output-format", "stream-json", "--trust", "--workspace", session.cwd];
     if (session.externalSessionId) args.push("--resume", session.externalSessionId);
