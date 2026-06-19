@@ -58,12 +58,13 @@ export function spawnLineStream(bin: string, args: string[], opts: SpawnOptions 
     }
   };
 
-  const timer = opts.timeoutMs
-    ? setTimeout(() => {
-        state.timedOut = true;
-        kill("SIGKILL");
-      }, opts.timeoutMs).unref()
-    : undefined;
+  const timer =
+    opts.timeoutMs != null
+      ? setTimeout(() => {
+          state.timedOut = true;
+          kill("SIGKILL");
+        }, opts.timeoutMs).unref()
+      : undefined;
 
   child.on("exit", (code) => {
     state.exited = true;
