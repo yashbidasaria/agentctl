@@ -25,11 +25,18 @@ npm install
 npm run dev -- agents doctor
 ```
 
-Build:
+Build (Node/tsc):
 
 ```bash
 npm run build
 node dist/index.js agents list
+```
+
+Build a single self-contained binary (requires [bun](https://bun.sh)):
+
+```bash
+npm run build:binary   # -> dist/agentctl
+./dist/agentctl agents list
 ```
 
 ## Quick start
