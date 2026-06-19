@@ -1,5 +1,7 @@
 # agentctl
 
+[![CI](https://github.com/yashbidasaria/agentctl/actions/workflows/ci.yml/badge.svg)](https://github.com/yashbidasaria/agentctl/actions/workflows/ci.yml)
+
 **The open-source control plane for coding agent CLIs.**
 
 Run Cursor, Claude Code, and Codex with one command surface and one event
