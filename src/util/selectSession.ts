@@ -1,16 +1,23 @@
 import select from "@inquirer/select";
-import { listSessions } from "../sessionStore.js";
+import { listSessions, type SessionRecord } from "../sessionStore.js";
 
 /**
  * Show an interactive dropdown to pick a session ID.
- * Returns undefined when the user cancels (Ctrl-C / ExitPromptError) or when
- * stdin is not a TTY and no sessions were pre-filtered in.
- * Throws when there are no sessions at all.
+ *
+ * @param filter   Optional predicate to restrict which sessions appear.
+ * @param emptyMsg Error message when no sessions match the filter.
+ *
+ * Returns undefined when the user cancels (Ctrl-C / ExitPromptError).
+ * Throws when no sessions match or stdin is not a TTY.
  */
-export async function pickSession(): Promise<string | undefined> {
-  const sessions = await listSessions();
+export async function pickSession(
+  filter?: (s: SessionRecord) => boolean,
+  emptyMsg = "No sessions found.",
+): Promise<string | undefined> {
+  const all = await listSessions();
+  const sessions = filter ? all.filter(filter) : all;
   if (sessions.length === 0) {
-    throw new Error("No sessions found.");
+    throw new Error(emptyMsg);
   }
   if (!process.stdin.isTTY) {
     throw new Error("No session id provided and stdin is not a TTY (cannot show picker).");

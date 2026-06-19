@@ -92,9 +92,33 @@ async function stream(
 
   const writer = new OutputWriter(format);
   let exitCode: number = ExitCode.Success;
-  for await (const event of adapter.send(handle, sendOpts)) {
-    writer.write(event);
-    if (event.type === "done") exitCode = event.exitCode;
+
+  // On SIGINT/SIGTERM: kill the subprocess and mark the session idle before
+  // exiting so `session list` immediately shows the correct state.
+  const cleanupOnSignal = async () => {
+    const rec = await readSession(handle.id).catch(() => undefined);
+    if (rec?.pgid) { try { process.kill(-rec.pgid, "SIGTERM"); } catch { /* gone */ } }
+    else if (rec?.pid) { try { process.kill(rec.pid, "SIGTERM"); } catch { /* gone */ } }
+    await updateSession(handle.id, (r) => {
+      r.status = "idle";
+      r.busy = false;
+      r.pid = undefined;
+      r.pgid = undefined;
+    }).catch(() => {});
+    process.exit(ExitCode.UserCancel);
+  };
+  const sigHandler = () => { void cleanupOnSignal(); };
+  process.once("SIGINT", sigHandler);
+  process.once("SIGTERM", sigHandler);
+
+  try {
+    for await (const event of adapter.send(handle, sendOpts)) {
+      writer.write(event);
+      if (event.type === "done") exitCode = event.exitCode;
+    }
+  } finally {
+    process.removeListener("SIGINT", sigHandler);
+    process.removeListener("SIGTERM", sigHandler);
   }
   return exitCode;
 }
@@ -238,6 +262,14 @@ export async function sessionCancel(id: string): Promise<void> {
   }
   const adapter = getAdapter(rec.agent);
   await adapter.cancel({ runId: rec.lastRunId ?? "", sessionId: id, pid: rec.pid, pgid: rec.pgid });
+  // Write updated status immediately so subsequent `session list` reflects the
+  // cancel without waiting for the subprocess to exit and clean up itself.
+  await updateSession(id, (r) => {
+    r.status = "idle";
+    r.busy = false;
+    r.pid = undefined;
+    r.pgid = undefined;
+  });
 }
 
 /**

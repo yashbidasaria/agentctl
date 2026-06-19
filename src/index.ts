@@ -2,7 +2,7 @@
 import { Command, Option } from "commander";
 import { loadConfig, setConfigKey } from "./config.js";
 import { listAdapters } from "./adapters/registry.js";
-import { listSessions, readSession } from "./sessionStore.js";
+import { listSessions, readSession, type SessionRecord } from "./sessionStore.js";
 import { ExitCode, type OutputFormat, type Runtime, type ApprovePolicy, type SettingSource } from "./types.js";
 import { copyToClipboard } from "./util/clipboard.js";
 import { pickSession } from "./util/selectSession.js";
@@ -142,19 +142,31 @@ const session = program.command("session").description("Manage durable multi-tur
 
 /**
  * Resolve an optional session id: return it as-is when provided, otherwise
- * show the interactive picker. Returns undefined when the user cancels.
+ * show the interactive picker filtered to matching sessions.
+ * Returns undefined when the user cancels.
  */
-async function resolveSession(id: string | undefined): Promise<string | undefined> {
-  return id ?? pickSession();
+async function resolveSession(
+  id: string | undefined,
+  filter?: (s: SessionRecord) => boolean,
+  emptyMsg?: string,
+): Promise<string | undefined> {
+  return id ?? pickSession(filter, emptyMsg);
 }
+
+const isActive = (s: SessionRecord) => s.status !== "idle";
 
 session
   .command("list")
-  .description("List sessions; pick one to enter an interactive REPL (TTY only)")
-  .action(async () => {
-    const sessions = await listSessions();
+  .description("List active sessions; pick one to enter an interactive REPL (TTY only)")
+  .option("--all", "include idle (completed) sessions")
+  .action(async (opts: { all?: boolean }) => {
+    const all = await listSessions();
+    const sessions = opts.all ? all : all.filter(isActive);
+    const emptyMsg = opts.all
+      ? "No sessions yet."
+      : "No active sessions (use --all to include completed ones).";
     if (sessions.length === 0) {
-      console.log("No sessions yet.");
+      console.log(emptyMsg);
       return;
     }
     if (!process.stdin.isTTY) {
@@ -163,7 +175,7 @@ session
       }
       return;
     }
-    const id = await pickSession();
+    const id = await pickSession(opts.all ? undefined : isActive, emptyMsg);
     if (!id) return;
     await sessionInteractive(id).catch(fail);
   });
@@ -210,7 +222,7 @@ session
   .option("--timeout <sec>", "timeout in seconds", (v) => Number.parseInt(v, 10))
   .action(async (id: string | undefined, prompt: string | undefined, opts: RawRunFlags) => {
     try {
-      const resolved = await resolveSession(id);
+      const resolved = await resolveSession(id, undefined, "No sessions found.");
       if (!resolved) return;
       if (!prompt) {
         await sessionInteractive(resolved);
@@ -227,7 +239,11 @@ session
   .description("Cancel the active run of a session (picker if id omitted)")
   .action(async (id: string | undefined) => {
     try {
-      const resolved = await resolveSession(id);
+      const resolved = await resolveSession(
+        id,
+        (s) => s.status === "running" || s.busy,
+        "No running sessions to cancel.",
+      );
       if (!resolved) return;
       await sessionCancel(resolved);
       console.log(`Cancelled ${resolved}.`);
@@ -241,7 +257,11 @@ session
   .description("Reset a stuck/errored session to idle (picker if id omitted)")
   .action(async (id: string | undefined) => {
     try {
-      const resolved = await resolveSession(id);
+      const resolved = await resolveSession(
+        id,
+        (s) => s.status !== "idle",
+        "No stuck/errored sessions to resume.",
+      );
       if (!resolved) return;
       const rec = await sessionResume(resolved);
       console.log(JSON.stringify(rec, null, 2));
@@ -255,7 +275,11 @@ session
   .description("Poll a running session until it finishes (picker if id omitted)")
   .action(async (id: string | undefined) => {
     try {
-      const resolved = await resolveSession(id);
+      const resolved = await resolveSession(
+        id,
+        (s) => s.status === "running" || s.status === "waiting_approval",
+        "No running sessions to follow.",
+      );
       if (!resolved) return;
       const rec = await sessionFollow(resolved, 500, (status) => {
         process.stderr.write(`[agentctl] session status: ${status}\n`);
@@ -274,7 +298,11 @@ session
   )
   .action(async (id: string | undefined, opts: { decision: string }) => {
     try {
-      const resolved = await resolveSession(id);
+      const resolved = await resolveSession(
+        id,
+        (s) => s.status === "waiting_approval",
+        "No sessions waiting for approval.",
+      );
       if (!resolved) return;
       await sessionApprove(resolved, opts.decision as "allow" | "deny");
       console.log(`${opts.decision === "allow" ? "Approved" : "Denied"}: ${resolved}`);
