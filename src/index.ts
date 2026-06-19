@@ -1,9 +1,48 @@
 #!/usr/bin/env node
 import { Command, Option } from "commander";
 import { loadConfig, setConfigKey } from "./config.js";
-import { getAdapter, listAdapters } from "./adapters/registry.js";
+import { listAdapters } from "./adapters/registry.js";
 import { listSessions, readSession } from "./sessionStore.js";
-import { ExitCode } from "./types.js";
+import { ExitCode, type OutputFormat, type Runtime, type ApprovePolicy, type SettingSource } from "./types.js";
+import {
+  runOnce,
+  sessionCancel,
+  sessionCreate,
+  sessionSend,
+  StartupError,
+  type CommonRunFlags,
+} from "./runner.js";
+
+interface RawRunFlags {
+  agent?: string;
+  cwd?: string;
+  runtime?: string;
+  approve?: string;
+  settings?: string;
+  sandbox?: string;
+  model?: string;
+  timeout?: number;
+  format?: string;
+}
+
+function toFlags(o: RawRunFlags): CommonRunFlags {
+  return {
+    agent: o.agent,
+    cwd: o.cwd,
+    runtime: o.runtime as Runtime | undefined,
+    approve: o.approve as ApprovePolicy | undefined,
+    settings: o.settings as SettingSource | undefined,
+    sandbox: o.sandbox,
+    model: o.model,
+    timeout: o.timeout,
+    format: o.format as OutputFormat | undefined,
+  };
+}
+
+function fail(err: unknown): void {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exitCode = err instanceof StartupError ? ExitCode.StartupFailure : ExitCode.RunFailed;
+}
 
 const program = new Command();
 
@@ -85,9 +124,12 @@ program
   .option("--sandbox <mode>", "sandbox mode (enabled|disabled)")
   .option("--model <id>", "agent-specific model id")
   .option("--timeout <sec>", "timeout in seconds", (v) => Number.parseInt(v, 10))
-  .action(async () => {
-    console.error("run: not implemented yet (Phase 1). The CLI surface and adapters are scaffolded.");
-    process.exitCode = ExitCode.StartupFailure;
+  .action(async (opts: RawRunFlags & { prompt: string }) => {
+    try {
+      process.exitCode = await runOnce(opts.prompt, toFlags(opts));
+    } catch (err) {
+      fail(err);
+    }
   });
 
 const session = program.command("session").description("Manage durable multi-turn sessions");
@@ -119,25 +161,62 @@ session
     console.log(JSON.stringify(rec, null, 2));
   });
 
+session
+  .command("create")
+  .description("Create a new session and print its id")
+  .option("--agent <name>", "agent backend (defaults to configured default)")
+  .option("--cwd <dir>", "working directory", process.cwd())
+  .addOption(new Option("--runtime <runtime>", "execution runtime").choices(["local", "cloud"]))
+  .action(async (opts: RawRunFlags) => {
+    try {
+      const id = await sessionCreate(toFlags(opts));
+      console.log(id);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+session
+  .command("send <id> <prompt>")
+  .description("Send a prompt to an existing session")
+  .addOption(new Option("--approve <policy>", "non-interactive approval policy").choices(["none", "all"]))
+  .addOption(new Option("--format <format>", "output format").choices(["text", "json", "stream-json"]).default("text"))
+  .option("--model <id>", "agent-specific model id")
+  .option("--sandbox <mode>", "sandbox mode (enabled|disabled)")
+  .option("--timeout <sec>", "timeout in seconds", (v) => Number.parseInt(v, 10))
+  .action(async (id: string, prompt: string, opts: RawRunFlags) => {
+    try {
+      process.exitCode = await sessionSend(id, prompt, toFlags(opts));
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+session
+  .command("cancel <id>")
+  .description("Cancel the active run of a session")
+  .action(async (id: string) => {
+    try {
+      await sessionCancel(id);
+      console.log(`Cancelled ${id}.`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
 for (const [name, summary] of [
-  ["create", "Create a new session"],
-  ["send", "Send a prompt to a session"],
   ["follow", "Stream events from an active session"],
   ["resume", "Resume an existing session"],
   ["approve", "Respond to a waiting_approval"],
-  ["cancel", "Cancel an active run"],
 ] as const) {
   session
     .command(`${name} [args...]`)
     .description(`${summary} (not implemented yet)`)
     .action(() => {
-      console.error(`session ${name}: not implemented yet. Adapter wiring lands in Phase 1/2.`);
+      console.error(`session ${name}: not implemented yet.`);
       process.exitCode = ExitCode.StartupFailure;
     });
 }
-
-// Suppress unused import warning until adapters are wired into run/session.
-void getAdapter;
 
 program.parseAsync().catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));

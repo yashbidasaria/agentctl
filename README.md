@@ -6,9 +6,9 @@ Run Cursor, Claude Code, and Codex with one command surface and one event
 stream. `agentctl` doesn't replace your agents — it makes them scriptable,
 swappable, and resumable.
 
-> Status: early scaffold. `agents list`, `agents doctor`, and `config` work
-> today. `run` and `session` lifecycle commands are stubbed while the Cursor
-> (Phase 1) and Claude Code (Phase 2) adapters are implemented.
+> Status: Phase 1. The **Cursor adapter works end to end** — `run`,
+> `session create/send/cancel`, and multi-turn resume drive the real Cursor CLI
+> via its `stream-json` output. The Claude Code adapter (Phase 2) is next.
 
 ## Why agentctl?
 
@@ -54,8 +54,18 @@ agentctl run --agent claude  -p "review PR diff"
 | `agents list` | working | List adapters and capabilities |
 | `agents doctor` | working | Check binaries + auth |
 | `config get` / `config set <k> <v>` | working | View/update config |
-| `run` | stubbed | One-shot synchronous prompt |
-| `session create/send/follow/resume/approve/cancel` | stubbed | Durable multi-turn sessions |
+| `run` | working (cursor) | One-shot synchronous prompt |
+| `session create` / `send` / `cancel` | working (cursor) | Durable multi-turn sessions with resume |
+| `session follow` / `resume` / `approve` | stubbed | Planned |
+
+Example:
+
+```bash
+agentctl run --agent cursor -p "explain this repo" --format stream-json
+SID=$(agentctl session create --agent cursor)
+agentctl session send "$SID" "add a test for foo()"
+agentctl session send "$SID" "now run it"   # resumes context
+```
 
 ## Global flags
 
