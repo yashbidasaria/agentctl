@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { Command, Option } from "commander";
-import select from "@inquirer/select";
 import { loadConfig, setConfigKey } from "./config.js";
 import { listAdapters } from "./adapters/registry.js";
 import { listSessions, readSession } from "./sessionStore.js";
 import { ExitCode, type OutputFormat, type Runtime, type ApprovePolicy, type SettingSource } from "./types.js";
 import { copyToClipboard } from "./util/clipboard.js";
+import { pickSession } from "./util/selectSession.js";
 import {
   runOnce,
   sessionApprove,
@@ -140,9 +140,17 @@ program
 
 const session = program.command("session").description("Manage durable multi-turn sessions");
 
+/**
+ * Resolve an optional session id: return it as-is when provided, otherwise
+ * show the interactive picker. Returns undefined when the user cancels.
+ */
+async function resolveSession(id: string | undefined): Promise<string | undefined> {
+  return id ?? pickSession();
+}
+
 session
   .command("list")
-  .description("List sessions (interactive dropdown when stdin is a TTY)")
+  .description("List sessions; pick one to enter an interactive REPL (TTY only)")
   .action(async () => {
     const sessions = await listSessions();
     if (sessions.length === 0) {
@@ -155,30 +163,20 @@ session
       }
       return;
     }
-    try {
-      const id = await select({
-        message: "Select a session",
-        choices: sessions.map((s) => ({
-          name: `${s.id}  ${s.agent.padEnd(8)} ${s.status.padEnd(16)} ${s.cwd}`,
-          value: s.id,
-        })),
-        pageSize: Math.min(sessions.length, 10),
-      });
-      await sessionInteractive(id);
-    } catch (err) {
-      // ExitPromptError is thrown when the user presses Ctrl-C in the selector.
-      if ((err as Error).name === "ExitPromptError") return;
-      fail(err);
-    }
+    const id = await pickSession();
+    if (!id) return;
+    await sessionInteractive(id).catch(fail);
   });
 
 session
-  .command("show <id>")
-  .description("Show a single session record")
-  .action(async (id: string) => {
-    const rec = await readSession(id);
+  .command("show [id]")
+  .description("Show a single session record (picker if id omitted)")
+  .action(async (id: string | undefined) => {
+    const resolved = await resolveSession(id).catch(fail);
+    if (!resolved) return;
+    const rec = await readSession(resolved);
     if (!rec) {
-      console.error(`Session not found: ${id}`);
+      console.error(`Session not found: ${resolved}`);
       process.exitCode = ExitCode.StartupFailure;
       return;
     }
@@ -187,7 +185,7 @@ session
 
 session
   .command("create")
-  .description("Create a new session and print its id")
+  .description("Create a new session and print its id (copies to clipboard)")
   .option("--agent <name>", "agent backend (defaults to configured default)")
   .option("--cwd <dir>", "working directory", process.cwd())
   .addOption(new Option("--runtime <runtime>", "execution runtime").choices(["local", "cloud"]))
@@ -203,39 +201,49 @@ session
   });
 
 session
-  .command("send <id> <prompt>")
-  .description("Send a prompt to an existing session")
+  .command("send [id] [prompt]")
+  .description("Send a prompt to a session (picker if id omitted; REPL if prompt omitted)")
   .addOption(new Option("--approve <policy>", "non-interactive approval policy").choices(["none", "all"]).default("all"))
   .addOption(new Option("--format <format>", "output format").choices(["text", "json", "stream-json", "result"]).default("result"))
   .option("--model <id>", "agent-specific model id")
   .option("--sandbox <mode>", "sandbox mode (enabled|disabled)")
   .option("--timeout <sec>", "timeout in seconds", (v) => Number.parseInt(v, 10))
-  .action(async (id: string, prompt: string, opts: RawRunFlags) => {
+  .action(async (id: string | undefined, prompt: string | undefined, opts: RawRunFlags) => {
     try {
-      process.exitCode = await sessionSend(id, prompt, toFlags(opts));
+      const resolved = await resolveSession(id);
+      if (!resolved) return;
+      if (!prompt) {
+        await sessionInteractive(resolved);
+      } else {
+        process.exitCode = await sessionSend(resolved, prompt, toFlags(opts));
+      }
     } catch (err) {
       fail(err);
     }
   });
 
 session
-  .command("cancel <id>")
-  .description("Cancel the active run of a session")
-  .action(async (id: string) => {
+  .command("cancel [id]")
+  .description("Cancel the active run of a session (picker if id omitted)")
+  .action(async (id: string | undefined) => {
     try {
-      await sessionCancel(id);
-      console.log(`Cancelled ${id}.`);
+      const resolved = await resolveSession(id);
+      if (!resolved) return;
+      await sessionCancel(resolved);
+      console.log(`Cancelled ${resolved}.`);
     } catch (err) {
       fail(err);
     }
   });
 
 session
-  .command("resume <id>")
-  .description("Reset a stuck/errored session to idle so it can accept new sends")
-  .action(async (id: string) => {
+  .command("resume [id]")
+  .description("Reset a stuck/errored session to idle (picker if id omitted)")
+  .action(async (id: string | undefined) => {
     try {
-      const rec = await sessionResume(id);
+      const resolved = await resolveSession(id);
+      if (!resolved) return;
+      const rec = await sessionResume(resolved);
       console.log(JSON.stringify(rec, null, 2));
     } catch (err) {
       fail(err);
@@ -243,11 +251,13 @@ session
   });
 
 session
-  .command("follow <id>")
-  .description("Poll a running session until it finishes (v1: status-level only)")
-  .action(async (id: string) => {
+  .command("follow [id]")
+  .description("Poll a running session until it finishes (picker if id omitted)")
+  .action(async (id: string | undefined) => {
     try {
-      const rec = await sessionFollow(id, 500, (status) => {
+      const resolved = await resolveSession(id);
+      if (!resolved) return;
+      const rec = await sessionFollow(resolved, 500, (status) => {
         process.stderr.write(`[agentctl] session status: ${status}\n`);
       });
       console.log(JSON.stringify(rec, null, 2));
@@ -257,15 +267,17 @@ session
   });
 
 session
-  .command("approve <id>")
-  .description("Respond to a waiting_approval on a detached session")
+  .command("approve [id]")
+  .description("Respond to a waiting_approval (picker if id omitted)")
   .addOption(
     new Option("--decision <decision>", "approval decision").choices(["allow", "deny"]).default("allow"),
   )
-  .action(async (id: string, opts: { decision: string }) => {
+  .action(async (id: string | undefined, opts: { decision: string }) => {
     try {
-      await sessionApprove(id, opts.decision as "allow" | "deny");
-      console.log(`${opts.decision === "allow" ? "Approved" : "Denied"}: ${id}`);
+      const resolved = await resolveSession(id);
+      if (!resolved) return;
+      await sessionApprove(resolved, opts.decision as "allow" | "deny");
+      console.log(`${opts.decision === "allow" ? "Approved" : "Denied"}: ${resolved}`);
     } catch (err) {
       fail(err);
     }
