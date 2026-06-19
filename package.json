@@ -32,6 +32,7 @@
     "devtools"
   ],
   "dependencies": {
+    "@inquirer/select": "^5.2.1",
     "commander": "^12.1.0",
     "proper-lockfile": "^4.1.2"
   },

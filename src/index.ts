@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 import { Command, Option } from "commander";
+import select from "@inquirer/select";
 import { loadConfig, setConfigKey } from "./config.js";
 import { listAdapters } from "./adapters/registry.js";
 import { listSessions, readSession } from "./sessionStore.js";
 import { ExitCode, type OutputFormat, type Runtime, type ApprovePolicy, type SettingSource } from "./types.js";
+import { copyToClipboard } from "./util/clipboard.js";
 import {
   runOnce,
   sessionApprove,
   sessionCancel,
   sessionCreate,
   sessionFollow,
+  sessionInteractive,
   sessionResume,
   sessionSend,
   StartupError,
@@ -139,15 +142,33 @@ const session = program.command("session").description("Manage durable multi-tur
 
 session
   .command("list")
-  .description("List known sessions")
+  .description("List sessions (interactive dropdown when stdin is a TTY)")
   .action(async () => {
     const sessions = await listSessions();
     if (sessions.length === 0) {
       console.log("No sessions yet.");
       return;
     }
-    for (const s of sessions) {
-      console.log(`${s.id}  ${s.agent.padEnd(8)} ${s.status.padEnd(16)} ${s.cwd}`);
+    if (!process.stdin.isTTY) {
+      for (const s of sessions) {
+        console.log(`${s.id}  ${s.agent.padEnd(8)} ${s.status.padEnd(16)} ${s.cwd}`);
+      }
+      return;
+    }
+    try {
+      const id = await select({
+        message: "Select a session",
+        choices: sessions.map((s) => ({
+          name: `${s.id}  ${s.agent.padEnd(8)} ${s.status.padEnd(16)} ${s.cwd}`,
+          value: s.id,
+        })),
+        pageSize: Math.min(sessions.length, 10),
+      });
+      await sessionInteractive(id);
+    } catch (err) {
+      // ExitPromptError is thrown when the user presses Ctrl-C in the selector.
+      if ((err as Error).name === "ExitPromptError") return;
+      fail(err);
     }
   });
 
@@ -174,6 +195,8 @@ session
     try {
       const id = await sessionCreate(toFlags(opts));
       console.log(id);
+      const copied = copyToClipboard(id);
+      if (copied) process.stderr.write("[agentctl] session id copied to clipboard\n");
     } catch (err) {
       fail(err);
     }

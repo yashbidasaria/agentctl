@@ -1,4 +1,5 @@
 import path from "node:path";
+import readline from "node:readline";
 import { getAdapter } from "./adapters/registry.js";
 import { loadConfig } from "./config.js";
 import { OutputWriter } from "./output.js";
@@ -237,6 +238,39 @@ export async function sessionCancel(id: string): Promise<void> {
   }
   const adapter = getAdapter(rec.agent);
   await adapter.cancel({ runId: rec.lastRunId ?? "", sessionId: id, pid: rec.pid, pgid: rec.pgid });
+}
+
+/**
+ * `agentctl session list` (interactive) — enter a REPL for an existing session.
+ *
+ * Reads prompts from stdin, calls sessionSend for each, prints only the final
+ * result. `:quit`, `:q`, or Ctrl-D exit the REPL.
+ */
+export async function sessionInteractive(id: string): Promise<void> {
+  const rec = await readSession(id);
+  if (!rec) throw new StartupError(`Session not found: ${id}`);
+
+  const shortId = id.slice(0, 16);
+  process.stderr.write(`\nSession ${id} (${rec.agent} · ${rec.cwd})\nType :quit to exit.\n\n`);
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  rl.setPrompt(`[${shortId}] > `);
+  rl.prompt();
+
+  for await (const line of rl) {
+    const input = line.trim();
+    if (!input) { rl.prompt(); continue; }
+    if (input === ":quit" || input === ":q" || input === "exit") break;
+    try {
+      await sessionSend(id, input, { approve: "all", format: "result" });
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+    }
+    process.stdout.write("\n");
+    rl.prompt();
+  }
+
+  rl.close();
 }
 
 function buildSendOptions(promptText: string, r: Resolved): SendOptions {
