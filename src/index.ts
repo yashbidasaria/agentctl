@@ -6,8 +6,11 @@ import { listSessions, readSession } from "./sessionStore.js";
 import { ExitCode, type OutputFormat, type Runtime, type ApprovePolicy, type SettingSource } from "./types.js";
 import {
   runOnce,
+  sessionApprove,
   sessionCancel,
   sessionCreate,
+  sessionFollow,
+  sessionResume,
   sessionSend,
   StartupError,
   type CommonRunFlags,
@@ -204,19 +207,46 @@ session
     }
   });
 
-for (const [name, summary] of [
-  ["follow", "Stream events from an active session"],
-  ["resume", "Resume an existing session"],
-  ["approve", "Respond to a waiting_approval"],
-] as const) {
-  session
-    .command(`${name} [args...]`)
-    .description(`${summary} (not implemented yet)`)
-    .action(() => {
-      console.error(`session ${name}: not implemented yet.`);
-      process.exitCode = ExitCode.StartupFailure;
-    });
-}
+session
+  .command("resume <id>")
+  .description("Reset a stuck/errored session to idle so it can accept new sends")
+  .action(async (id: string) => {
+    try {
+      const rec = await sessionResume(id);
+      console.log(JSON.stringify(rec, null, 2));
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+session
+  .command("follow <id>")
+  .description("Poll a running session until it finishes (v1: status-level only)")
+  .action(async (id: string) => {
+    try {
+      const rec = await sessionFollow(id, 500, (status) => {
+        process.stderr.write(`[agentctl] session status: ${status}\n`);
+      });
+      console.log(JSON.stringify(rec, null, 2));
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+session
+  .command("approve <id>")
+  .description("Respond to a waiting_approval on a detached session")
+  .addOption(
+    new Option("--decision <decision>", "approval decision").choices(["allow", "deny"]).default("allow"),
+  )
+  .action(async (id: string, opts: { decision: string }) => {
+    try {
+      await sessionApprove(id, opts.decision as "allow" | "deny");
+      console.log(`${opts.decision === "allow" ? "Approved" : "Denied"}: ${id}`);
+    } catch (err) {
+      fail(err);
+    }
+  });
 
 program.parseAsync().catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));

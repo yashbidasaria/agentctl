@@ -7,6 +7,7 @@ import {
   newSessionId,
   readSession,
   updateSession,
+  type SessionRecord,
 } from "./sessionStore.js";
 import {
   ExitCode,
@@ -152,6 +153,78 @@ export async function sessionSend(
     } catch {
       // Swallow errors here so the run's original result is not replaced.
     }
+  }
+}
+
+/** `agentctl session resume <id>` — reset a stuck session so it can accept new sends. */
+export async function sessionResume(id: string): Promise<SessionRecord> {
+  const rec = await readSession(id);
+  if (!rec) throw new StartupError(`Session not found: ${id}`);
+  if (rec.busy) throw new StartupError(`Session ${id} is busy — a run is already in progress.`);
+  if (rec.status === "running" || rec.status === "error" || rec.status === "timeout") {
+    return updateSession(id, (r) => {
+      r.status = "idle";
+      r.pid = undefined;
+      r.pgid = undefined;
+    });
+  }
+  return rec;
+}
+
+/**
+ * `agentctl session follow <id>` — poll the session record until the run finishes.
+ *
+ * v1 limitation: only session-level status is visible, not the full event stream.
+ * Full event streaming requires the run to be active in the same process.
+ */
+export async function sessionFollow(
+  id: string,
+  pollMs = 500,
+  onStatus?: (status: string) => void,
+): Promise<SessionRecord> {
+  const initial = await readSession(id);
+  if (!initial) throw new StartupError(`Session not found: ${id}`);
+
+  const active = new Set(["running", "waiting_approval"]);
+  if (!active.has(initial.status)) return initial;
+
+  let last = initial.status;
+  onStatus?.(last);
+  for (;;) {
+    await new Promise<void>((r) => setTimeout(r, pollMs));
+    const rec = await readSession(id);
+    if (!rec) throw new StartupError(`Session ${id} disappeared while following.`);
+    if (rec.status !== last) {
+      last = rec.status;
+      onStatus?.(last);
+    }
+    if (!active.has(rec.status)) return rec;
+  }
+}
+
+/** `agentctl session approve <id> --allow|--deny` — respond to a waiting_approval. */
+export async function sessionApprove(id: string, decision: "allow" | "deny"): Promise<void> {
+  const rec = await readSession(id);
+  if (!rec) throw new StartupError(`Session not found: ${id}`);
+  if (rec.status !== "waiting_approval") {
+    throw new StartupError(
+      `Session ${id} is not waiting for approval (status: ${rec.status}).`,
+    );
+  }
+  const adapter = getAdapter(rec.agent);
+  const runHandle = {
+    runId: rec.lastRunId ?? "",
+    sessionId: id,
+    pid: rec.pid,
+    pgid: rec.pgid,
+  };
+  await adapter.respondToApproval(runHandle, decision);
+  if (decision === "deny") {
+    await updateSession(id, (r) => {
+      r.status = "idle";
+      r.pid = undefined;
+      r.pgid = undefined;
+    });
   }
 }
 
