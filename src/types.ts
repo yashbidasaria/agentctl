@@ -86,6 +86,9 @@ export interface SessionOptions {
 export interface SendOptions {
   prompt: string;
   approve: ApprovePolicy;
+  settings: SettingSource;
+  model?: string;
+  sandbox?: boolean;
   timeoutSec?: number;
   /** Whether stdin is an interactive TTY (drives inline approval prompts). */
   interactive: boolean;

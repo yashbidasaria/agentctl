@@ -29,6 +29,10 @@ export function newSessionId(): string {
   return `sess_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 }
 
+export function newRunId(): string {
+  return `run_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+}
+
 export async function createSession(
   rec: Omit<SessionRecord, "createdAt" | "updatedAt" | "status" | "busy">,
 ): Promise<SessionRecord> {
