@@ -18,12 +18,33 @@ export interface StreamAgentParams {
 /**
  * Shared driver for stream-json agent CLIs (Cursor, Claude Code).
  *
- * Emits the leading `meta` event, spawns the binary in its own process group,
- * parses NDJSON via the shared parser, persists pid/pgid for cross-process
- * cancel, and synthesizes a terminal `done` if the process exits without one.
+ * Spawns the binary, writes pid/pgid to the session record (so sessionCancel
+ * can signal the process from another process), then emits the leading `meta`
+ * event and parses NDJSON via the shared parser. Synthesizes a terminal `done`
+ * if the process exits without one.
  */
 export async function* runStreamJsonAgent(p: StreamAgentParams): AsyncIterable<AgentEvent> {
   const runId = newRunId();
+
+  const proc = spawnLineStream(p.binary, p.args, {
+    cwd: p.session.cwd,
+    timeoutMs: p.send.timeoutSec != null ? p.send.timeoutSec * 1000 : undefined,
+  });
+
+  // Write pid/pgid before yielding meta so a consumer that cancels on meta
+  // finds the process already registered in the session record.
+  try {
+    await safeUpdate(p.session.id, (r) => {
+      r.status = "running";
+      r.lastRunId = runId;
+      r.pid = proc.pid;
+      r.pgid = proc.pgid;
+    });
+  } catch (err) {
+    proc.kill("SIGKILL");
+    throw err;
+  }
+
   yield {
     type: "meta",
     schemaVersion: SCHEMA_VERSION,
@@ -31,18 +52,6 @@ export async function* runStreamJsonAgent(p: StreamAgentParams): AsyncIterable<A
     sessionId: p.session.id,
     runId,
   };
-
-  const proc = spawnLineStream(p.binary, p.args, {
-    cwd: p.session.cwd,
-    timeoutMs: p.send.timeoutSec ? p.send.timeoutSec * 1000 : undefined,
-  });
-
-  await safeUpdate(p.session.id, (r) => {
-    r.status = "running";
-    r.lastRunId = runId;
-    r.pid = proc.pid;
-    r.pgid = proc.pgid;
-  });
 
   const parser = new StreamJsonParser();
   try {
@@ -56,12 +65,17 @@ export async function* runStreamJsonAgent(p: StreamAgentParams): AsyncIterable<A
       for (const event of parser.parse(obj)) yield event;
     }
   } finally {
-    await safeUpdate(p.session.id, (r) => {
-      if (parser.externalSessionId) r.externalSessionId = parser.externalSessionId;
-      r.pid = undefined;
-      r.pgid = undefined;
-      r.status = parser.doneEmitted ? "idle" : "error";
-    });
+    const timedOut = proc.state.timedOut;
+    try {
+      await updateSession(p.session.id, (r) => {
+        if (parser.externalSessionId) r.externalSessionId = parser.externalSessionId;
+        r.pid = undefined;
+        r.pgid = undefined;
+        r.status = parser.doneEmitted ? "idle" : timedOut ? "timeout" : "error";
+      });
+    } catch {
+      // Swallow cleanup errors to avoid masking the run's original error or result.
+    }
   }
 
   if (!parser.doneEmitted) {
@@ -75,13 +89,16 @@ export async function* runStreamJsonAgent(p: StreamAgentParams): AsyncIterable<A
   }
 }
 
+// Swallows only "Session not found" (ad-hoc handles with no persisted record).
+// Real I/O errors (ENOSPC, lock timeout, etc.) are re-thrown.
 async function safeUpdate(
   id: string,
   mutate: Parameters<typeof updateSession>[1],
 ): Promise<void> {
   try {
     await updateSession(id, mutate);
-  } catch {
-    // session record may not exist for ad-hoc handles; ignore.
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Session not found")) return;
+    throw err;
   }
 }

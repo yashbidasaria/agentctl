@@ -127,7 +127,6 @@ export async function sessionSend(
 ): Promise<number> {
   const rec = await readSession(id);
   if (!rec) throw new StartupError(`Session not found: ${id}`);
-  if (rec.busy) throw new StartupError(`Session ${id} is busy (a run is in progress).`);
 
   const r = await resolve({ ...flags, agent: rec.agent, cwd: rec.cwd, runtime: rec.runtime });
   const handle: SessionHandle = {
@@ -137,15 +136,22 @@ export async function sessionSend(
     cwd: rec.cwd,
     externalSessionId: rec.externalSessionId,
   };
+  // Atomic check-and-set: busy check and write happen under the same lock,
+  // preventing two concurrent sends from both passing the guard.
   await updateSession(id, (x) => {
+    if (x.busy) throw new StartupError(`Session ${id} is busy (a run is in progress).`);
     x.busy = true;
   });
   try {
     return await stream(rec.agent, handle, buildSendOptions(promptText, r), r.format);
   } finally {
-    await updateSession(id, (x) => {
-      x.busy = false;
-    });
+    try {
+      await updateSession(id, (x) => {
+        x.busy = false;
+      });
+    } catch {
+      // Swallow errors here so the run's original result is not replaced.
+    }
   }
 }
 

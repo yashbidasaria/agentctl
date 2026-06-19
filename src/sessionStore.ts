@@ -13,7 +13,7 @@ export interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   lastRunId?: string;
-  status: "idle" | "running" | "waiting_approval" | "error";
+  status: "idle" | "running" | "waiting_approval" | "error" | "timeout";
   /** Guards against concurrent `send` to the same session. */
   busy: boolean;
   /** OS pid/pgid of the active local run (enables cross-process cancel). */

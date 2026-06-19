@@ -41,7 +41,7 @@ export function spawnLineStream(bin: string, args: string[], opts: SpawnOptions 
     cwd: opts.cwd,
     env: opts.env ?? process.env,
     detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "inherit"],
   });
 
   const pid = child.pid;
@@ -62,7 +62,7 @@ export function spawnLineStream(bin: string, args: string[], opts: SpawnOptions 
     ? setTimeout(() => {
         state.timedOut = true;
         kill("SIGKILL");
-      }, opts.timeoutMs)
+      }, opts.timeoutMs).unref()
     : undefined;
 
   child.on("exit", (code) => {

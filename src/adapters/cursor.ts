@@ -77,6 +77,7 @@ export const cursorAdapter: AgentAdapter = {
     if (prompt.model) args.push("--model", prompt.model);
     if (prompt.sandbox !== undefined) args.push("--sandbox", prompt.sandbox ? "enabled" : "disabled");
     if (prompt.approve === "all") args.push("--force");
+    args.push("--");
     args.push(prompt.prompt);
 
     return runStreamJsonAgent({ agent: "cursor", binary: BINARY, args, session, send: prompt });
@@ -89,11 +90,12 @@ export const cursorAdapter: AgentAdapter = {
   },
 
   async cancel(run: RunHandle): Promise<void> {
-    if (run.pgid === undefined) throw new Error("cursor: no active process group to cancel.");
-    try {
-      process.kill(-run.pgid, "SIGTERM");
-    } catch {
-      // already gone
+    if (run.pgid !== undefined) {
+      try { process.kill(-run.pgid, "SIGTERM"); } catch { /* already gone */ }
+    } else if (run.pid !== undefined) {
+      try { process.kill(run.pid, "SIGTERM"); } catch { /* already gone */ }
+    } else {
+      throw new Error("cursor: no active process group to cancel.");
     }
   },
 };

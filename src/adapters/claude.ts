@@ -73,6 +73,7 @@ export const claudeAdapter: AgentAdapter = {
     if (session.externalSessionId) args.push("--resume", session.externalSessionId);
     if (prompt.model) args.push("--model", prompt.model);
     if (prompt.approve === "all") args.push("--permission-mode", "bypassPermissions");
+    args.push("--");
     args.push(prompt.prompt);
 
     return runStreamJsonAgent({ agent: "claude", binary: BINARY, args, session, send: prompt });
@@ -85,11 +86,12 @@ export const claudeAdapter: AgentAdapter = {
   },
 
   async cancel(run: RunHandle): Promise<void> {
-    if (run.pgid === undefined) throw new Error("claude: no active process group to cancel.");
-    try {
-      process.kill(-run.pgid, "SIGTERM");
-    } catch {
-      // already gone
+    if (run.pgid !== undefined) {
+      try { process.kill(-run.pgid, "SIGTERM"); } catch { /* already gone */ }
+    } else if (run.pid !== undefined) {
+      try { process.kill(run.pid, "SIGTERM"); } catch { /* already gone */ }
+    } else {
+      throw new Error("claude: no active process group to cancel.");
     }
   },
 };
