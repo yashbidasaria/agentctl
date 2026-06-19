@@ -6,9 +6,9 @@ Run Cursor, Claude Code, and Codex with one command surface and one event
 stream. `agentctl` doesn't replace your agents — it makes them scriptable,
 swappable, and resumable.
 
-> Status: Phase 1. The **Cursor adapter works end to end** — `run`,
-> `session create/send/cancel`, and multi-turn resume drive the real Cursor CLI
-> via its `stream-json` output. The Claude Code adapter (Phase 2) is next.
+> Status: Phase 2. The **Cursor and Claude Code adapters work end to end** —
+> `run`, `session create/send/cancel`, and multi-turn resume drive the real
+> `agent` and `claude` CLIs via their (shared) `stream-json` output.
 
 ## Why agentctl?
 
@@ -62,7 +62,8 @@ Example:
 
 ```bash
 agentctl run --agent cursor -p "explain this repo" --format stream-json
-SID=$(agentctl session create --agent cursor)
+agentctl run --agent claude -p "explain this repo" --format stream-json
+SID=$(agentctl session create --agent claude)
 agentctl session send "$SID" "add a test for foo()"
 agentctl session send "$SID" "now run it"   # resumes context
 ```

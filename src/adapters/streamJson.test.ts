@@ -68,6 +68,18 @@ describe("StreamJsonParser", () => {
     expect(events.at(-1)).toMatchObject({ type: "done", outcome: "error", exitCode: 2 });
   });
 
+  it("handles Claude Code shape: snake_case usage and rate_limit_event", () => {
+    const { events, parser } = run([
+      '{"type":"system","subtype":"init","cwd":"/x","session_id":"cc-1","tools":["Bash"]}',
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}',
+      '{"type":"assistant","message":{"model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"pong"}],"usage":{"input_tokens":3,"output_tokens":5}}}',
+      '{"type":"result","subtype":"success","is_error":false,"result":"pong","session_id":"cc-1","usage":{"input_tokens":3,"output_tokens":5}}',
+    ]);
+    expect(parser.externalSessionId).toBe("cc-1");
+    expect(events).toContainEqual({ type: "usage", inputTokens: 3, outputTokens: 5 });
+    expect(events.at(-1)).toMatchObject({ type: "done", outcome: "finished", result: "pong" });
+  });
+
   it("ignores malformed / unknown lines", () => {
     const parser = new StreamJsonParser();
     expect(parser.parse({ type: "unknown_thing" })).toEqual([]);
