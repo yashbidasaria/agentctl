@@ -1,0 +1,44 @@
+{
+  "name": "agentctl",
+  "version": "0.0.1",
+  "description": "The open-source control plane for coding agent CLIs. Run Cursor, Claude Code, and Codex with one command surface and one event stream.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agentctl": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "cli",
+    "cursor",
+    "claude-code",
+    "codex",
+    "orchestration",
+    "devtools"
+  ],
+  "dependencies": {
+    "commander": "^12.1.0",
+    "proper-lockfile": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
