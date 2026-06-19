@@ -7,11 +7,9 @@ import type {
   SessionHandle,
   SessionOptions,
 } from "../types.js";
-import { SCHEMA_VERSION } from "../types.js";
 import { which, tryVersion } from "../util/proc.js";
-import { spawnLineStream } from "../util/subprocess.js";
-import { newRunId, newSessionId, updateSession } from "../sessionStore.js";
-import { StreamJsonParser } from "./streamJson.js";
+import { newSessionId } from "../sessionStore.js";
+import { runStreamJsonAgent } from "./streamProcess.js";
 
 const BINARY = "agent";
 
@@ -67,10 +65,7 @@ export const cursorAdapter: AgentAdapter = {
     };
   },
 
-  async *send(session: SessionHandle, prompt: SendOptions): AsyncIterable<AgentEvent> {
-    const runId = newRunId();
-    yield { type: "meta", schemaVersion: SCHEMA_VERSION, agent: "cursor", sessionId: session.id, runId };
-
+  send(session: SessionHandle, prompt: SendOptions): AsyncIterable<AgentEvent> {
     if (prompt.settings !== "project") {
       process.stderr.write(
         `[agentctl] note: --settings ${prompt.settings} is not controllable via the Cursor CLI; project settings apply.\n`,
@@ -84,47 +79,7 @@ export const cursorAdapter: AgentAdapter = {
     if (prompt.approve === "all") args.push("--force");
     args.push(prompt.prompt);
 
-    const proc = spawnLineStream(BINARY, args, {
-      cwd: session.cwd,
-      timeoutMs: prompt.timeoutSec ? prompt.timeoutSec * 1000 : undefined,
-    });
-
-    await safeUpdate(session.id, (r) => {
-      r.status = "running";
-      r.lastRunId = runId;
-      r.pid = proc.pid;
-      r.pgid = proc.pgid;
-    });
-
-    const parser = new StreamJsonParser();
-    try {
-      for await (const line of proc.lines) {
-        let obj: unknown;
-        try {
-          obj = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        for (const event of parser.parse(obj)) yield event;
-      }
-    } finally {
-      await safeUpdate(session.id, (r) => {
-        if (parser.externalSessionId) r.externalSessionId = parser.externalSessionId;
-        r.pid = undefined;
-        r.pgid = undefined;
-        r.status = parser.doneEmitted ? "idle" : "error";
-      });
-    }
-
-    if (!parser.doneEmitted) {
-      const outcome = proc.state.timedOut ? "timeout" : "error";
-      yield {
-        type: "done",
-        outcome,
-        exitCode: outcome === "timeout" ? 4 : 2,
-        result: proc.state.timedOut ? "timed out" : "agent exited without a result",
-      };
-    }
+    return runStreamJsonAgent({ agent: "cursor", binary: BINARY, args, session, send: prompt });
   },
 
   async respondToApproval(_run: RunHandle, _decision: "allow" | "deny"): Promise<void> {
@@ -147,15 +102,4 @@ async function hasCursorLogin(): Promise<boolean> {
   // `agent status` exits 0 when authenticated; treat absence as not-logged-in.
   const out = await tryVersion(BINARY, ["status"]);
   return out !== undefined;
-}
-
-async function safeUpdate(
-  id: string,
-  mutate: Parameters<typeof updateSession>[1],
-): Promise<void> {
-  try {
-    await updateSession(id, mutate);
-  } catch {
-    // session record may not exist for ad-hoc handles; ignore.
-  }
 }
